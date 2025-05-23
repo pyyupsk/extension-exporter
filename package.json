@@ -1,20 +1,28 @@
 {
   "name": "extension-export",
-  "type": "module",
-  "private": true,
-  "module": "src/index.ts",
+  "version": "1.0.0",
+  "description": "Export browser extensions from various browsers",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "module": "dist/index.mjs",
   "scripts": {
+    "build": "tsup",
+    "dev": "bun src/index.ts",
     "format": "prettier -w . --list-different --cache",
     "lint": "eslint src --cache",
     "lint:fix": "eslint src --fix",
+    "start": "node dist/index.js",
     "typecheck": "tsc --noEmit"
   },
-  "peerDependencies": {
-    "typescript": "^5.8.3"
-  },
   "dependencies": {
-    "@inquirer/prompts": "^7.5.1",
-    "archiver": "^7.0.1"
+    "@clack/prompts": "^0.11.0",
+    "archiver": "^7.0.1",
+    "chalk": "^5.4.1",
+    "execa": "^9.5.3",
+    "glob": "^11.0.2",
+    "p-limit": "^6.2.0",
+    "zod": "^3.25.23",
+    "zx": "^8.5.4"
   },
   "devDependencies": {
     "@eslint/js": "^9.27.0",
@@ -27,6 +35,7 @@
     "prettier": "^3.5.3",
     "prettier-plugin-pkg": "^0.19.1",
     "prettier-plugin-tailwindcss": "^0.6.11",
+    "tsup": "^8.5.0",
     "typescript-eslint": "^8.32.1"
   }
 }

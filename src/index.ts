@@ -1,9 +1,13 @@
-import { select } from "@inquirer/prompts"
+import { select, note } from "@clack/prompts"
 import archiver from "archiver"
 import { createWriteStream } from "fs"
 import fs from "fs/promises"
+import { glob } from "glob"
 import os from "os"
+import pLimit from "p-limit"
 import path from "path"
+import { z } from "zod"
+import { chalk } from "zx"
 
 // Types
 type BrowserConfig = {
@@ -169,7 +173,101 @@ const BROWSER_CONFIGS: Record<string, BrowserConfig> = {
   },
 }
 
+const ExtensionInfoSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  version: z.string(),
+  description: z.string().optional(),
+  manifest: z.union([
+    z.object({
+      manifest_version: z.literal(2),
+      name: z.string(),
+      version: z.string(),
+      description: z.string().optional(),
+      permissions: z.array(z.string()).optional(),
+      content_scripts: z
+        .array(
+          z.object({
+            matches: z.array(z.string()).optional(),
+            exclude_matches: z.array(z.string()).optional(),
+            css: z.array(z.string()).optional(),
+            js: z.array(z.string()).optional(),
+            run_at: z.string().optional(),
+          }),
+        )
+        .optional(),
+      background: z
+        .object({
+          scripts: z.array(z.string()).optional(),
+          page: z.string().optional(),
+          persistent: z.boolean().optional(),
+        })
+        .optional(),
+      browser_action: z
+        .object({
+          default_title: z.string().optional(),
+          default_icon: z.union([z.string(), z.record(z.string())]).optional(),
+          default_popup: z.string().optional(),
+        })
+        .optional(),
+      page_action: z
+        .object({
+          default_title: z.string().optional(),
+          default_icon: z.union([z.string(), z.record(z.string())]).optional(),
+          default_popup: z.string().optional(),
+        })
+        .optional(),
+      options_page: z.string().optional(),
+      web_accessible_resources: z.array(z.string()).optional(),
+    }),
+    z.object({
+      manifest_version: z.literal(3),
+      name: z.string(),
+      version: z.string(),
+      description: z.string().optional(),
+      permissions: z.array(z.string()).optional(),
+      host_permissions: z.array(z.string()).optional(),
+      content_scripts: z
+        .array(
+          z.object({
+            matches: z.array(z.string()).optional(),
+            exclude_matches: z.array(z.string()).optional(),
+            css: z.array(z.string()).optional(),
+            js: z.array(z.string()).optional(),
+            run_at: z.string().optional(),
+          }),
+        )
+        .optional(),
+      background: z
+        .object({
+          service_worker: z.string().optional(),
+          scripts: z.array(z.string()).optional(),
+        })
+        .optional(),
+      action: z
+        .object({
+          default_title: z.string().optional(),
+          default_icon: z.union([z.string(), z.record(z.string())]).optional(),
+          default_popup: z.string().optional(),
+        })
+        .optional(),
+      options_page: z.string().optional(),
+      web_accessible_resources: z
+        .array(
+          z.object({
+            resources: z.array(z.string()),
+            matches: z.array(z.string()),
+          }),
+        )
+        .optional(),
+    }),
+  ]),
+  folderPath: z.string(),
+})
+
 class ExtensionExporter {
+  private limit = pLimit(5) // Limit concurrent operations
+
   private getCurrentPlatform(): "windows" | "mac" | "linux" {
     const platform = os.platform()
     switch (platform) {
@@ -218,23 +316,24 @@ class ExtensionExporter {
     const profiles: string[] = []
     const items = await fs.readdir(basePath)
 
-    for (const item of items) {
-      const itemPath = path.join(basePath, item)
-      if (await this.isDirectory(itemPath)) {
-        // Check if item matches any profile pattern
-        const matches = config.profilePatterns.some((pattern) => {
-          if (pattern.includes("*")) {
-            const regex = new RegExp(pattern.replace(/\*/g, ".*"))
-            return regex.test(item)
-          }
-          return item === pattern
-        })
+    // Use Promise.all with pLimit for concurrent processing
+    await Promise.all(
+      items.map((item) =>
+        this.limit(async () => {
+          const itemPath = path.join(basePath, item)
+          if (await this.isDirectory(itemPath)) {
+            // Use glob for pattern matching
+            const matches = config.profilePatterns.some((pattern) => {
+              return glob.sync(pattern, { cwd: basePath }).includes(item)
+            })
 
-        if (matches) {
-          profiles.push(itemPath)
-        }
-      }
-    }
+            if (matches) {
+              profiles.push(itemPath)
+            }
+          }
+        }),
+      ),
+    )
 
     return profiles
   }
@@ -246,29 +345,34 @@ class ExtensionExporter {
   ): Promise<string> {
     const name = manifest.name || extId
 
-    // Handle localized names
     if (typeof name === "string" && name.startsWith("__MSG_") && name.endsWith("__")) {
-      const msgKey = name.slice(6, -2) // Remove __MSG_ and __
+      const msgKey = name.slice(6, -2)
       const localesDir = path.join(extDir, "_locales")
 
       if (await this.pathExists(localesDir)) {
-        // Try common locales
         const locales = ["en", "en_US", "en_GB"]
 
-        for (const locale of locales) {
-          const messagesPath = path.join(localesDir, locale, "messages.json")
-          if (await this.pathExists(messagesPath)) {
-            try {
-              const messagesData = await fs.readFile(messagesPath, "utf-8")
-              const messages = JSON.parse(messagesData)
-              if (messages[msgKey]?.message) {
-                return messages[msgKey].message
+        // Use Promise.all with pLimit for concurrent locale checking
+        const results = await Promise.all(
+          locales.map((locale) =>
+            this.limit(async () => {
+              const messagesPath = path.join(localesDir, locale, "messages.json")
+              if (await this.pathExists(messagesPath)) {
+                try {
+                  const messagesData = await fs.readFile(messagesPath, "utf-8")
+                  const messages = JSON.parse(messagesData)
+                  return messages[msgKey]?.message
+                } catch (error) {
+                  console.warn(chalk.yellow(`Error reading locale file ${messagesPath}:`, error))
+                }
               }
-            } catch (error) {
-              console.warn(`Error reading locale file ${messagesPath}:`, error)
-            }
-          }
-        }
+              return null
+            }),
+          ),
+        )
+
+        const foundName = results.find(Boolean)
+        if (foundName) return foundName
 
         // Try any available locale
         try {
@@ -284,7 +388,7 @@ class ExtensionExporter {
             }
           }
         } catch (error) {
-          console.warn("Error reading available locales:", error)
+          console.warn(chalk.yellow("Error reading available locales:", error))
         }
       }
 
@@ -302,97 +406,114 @@ class ExtensionExporter {
     const extPath = path.join(profilePath, config.extensionPath)
     const extensions: ExtensionInfo[] = []
 
-    console.log(`Looking for extensions in: ${extPath}`)
+    note(chalk.blue(`Looking for extensions in: ${extPath}`))
 
     if (!(await this.pathExists(extPath))) {
-      console.log(`Extensions path '${extPath}' does not exist.`)
+      note(chalk.yellow(`Extensions path '${extPath}' does not exist.`))
       return extensions
     }
 
     const items = await fs.readdir(extPath)
 
-    for (const item of items) {
-      const itemPath = path.join(extPath, item)
+    // Use Promise.all with pLimit for concurrent extension processing
+    const results = await Promise.all(
+      items.map((item) =>
+        this.limit(async () => {
+          const itemPath = path.join(extPath, item)
 
-      if (!(await this.isDirectory(itemPath))) continue
+          if (!(await this.isDirectory(itemPath))) return null
 
-      try {
-        let manifestPath: string
-        let extensionDir: string
+          try {
+            let manifestPath: string
+            let extensionDir: string
 
-        if (["chrome", "edge", "brave", "opera", "vivaldi"].includes(browser)) {
-          // Chromium-based browsers store extensions as ext_id/version/manifest.json
-          const versions = await fs.readdir(itemPath)
-          const versionDirs = []
+            if (["chrome", "edge", "brave", "opera", "vivaldi"].includes(browser)) {
+              const versions = await fs.readdir(itemPath)
+              const versionDirs = []
 
-          for (const version of versions) {
-            const versionPath = path.join(itemPath, version)
-            if (await this.isDirectory(versionPath)) {
-              versionDirs.push(version)
+              for (const version of versions) {
+                const versionPath = path.join(itemPath, version)
+                if (await this.isDirectory(versionPath)) {
+                  versionDirs.push(version)
+                }
+              }
+
+              if (versionDirs.length === 0) return null
+
+              const latestVersion = versionDirs.sort((a, b) => {
+                const aNum = a.split(".").map((n) => parseInt(n) || 0)
+                const bNum = b.split(".").map((n) => parseInt(n) || 0)
+                for (let i = 0; i < Math.max(aNum.length, bNum.length); i++) {
+                  const diff = (bNum[i] || 0) - (aNum[i] || 0)
+                  if (diff !== 0) return diff
+                }
+                return 0
+              })[0]
+
+              if (!latestVersion) return null
+              extensionDir = path.join(itemPath, latestVersion)
+              manifestPath = path.join(extensionDir, "manifest.json")
+            } else if (browser === "firefox") {
+              extensionDir = itemPath
+              manifestPath = path.join(itemPath, "manifest.json")
+            } else {
+              return null
             }
+
+            if (await this.pathExists(manifestPath)) {
+              const manifestData = await fs.readFile(manifestPath, "utf-8")
+              const manifest = JSON.parse(manifestData)
+              const extName = await this.getExtensionName(manifest, item, extensionDir)
+
+              const extensionInfo: ExtensionInfo = {
+                id: item,
+                name: extName,
+                version: manifest.version || "1.0.0",
+                description: manifest.description,
+                manifest,
+                folderPath: extensionDir,
+              }
+
+              // Validate extension info
+              try {
+                ExtensionInfoSchema.parse(extensionInfo)
+                return extensionInfo
+              } catch (error) {
+                console.warn(chalk.yellow(`Invalid extension info for ${item}:`, error))
+                return null
+              }
+            }
+          } catch (error) {
+            console.warn(chalk.yellow(`Error processing extension ${item}:`, error))
           }
+          return null
+        }),
+      ),
+    )
 
-          if (versionDirs.length === 0) continue
-
-          // Get the latest version (highest version number)
-          const latestVersion = versionDirs.sort((a, b) => {
-            const aNum = a.split(".").map((n) => parseInt(n) || 0)
-            const bNum = b.split(".").map((n) => parseInt(n) || 0)
-            for (let i = 0; i < Math.max(aNum.length, bNum.length); i++) {
-              const diff = (bNum[i] || 0) - (aNum[i] || 0)
-              if (diff !== 0) return diff
-            }
-            return 0
-          })[0]
-
-          if (!latestVersion) continue
-          extensionDir = path.join(itemPath, latestVersion)
-          manifestPath = path.join(extensionDir, "manifest.json")
-        } else if (browser === "firefox") {
-          // Firefox stores extensions directly in folders
-          extensionDir = itemPath
-          manifestPath = path.join(itemPath, "manifest.json")
-        } else {
-          continue
-        }
-
-        if (await this.pathExists(manifestPath)) {
-          const manifestData = await fs.readFile(manifestPath, "utf-8")
-          const manifest = JSON.parse(manifestData)
-          const extName = await this.getExtensionName(manifest, item, extensionDir)
-
-          extensions.push({
-            id: item,
-            name: extName,
-            version: manifest.version || "1.0.0",
-            description: manifest.description,
-            manifest,
-            folderPath: extensionDir,
-          })
-        }
-      } catch (error) {
-        console.warn(`Error processing extension ${item}:`, error)
-      }
-    }
-
-    return extensions
+    return results.filter((ext): ext is ExtensionInfo => ext !== null)
   }
 
   private async copyDirectory(src: string, dest: string): Promise<void> {
     await fs.mkdir(dest, { recursive: true })
     const items = await fs.readdir(src)
 
-    for (const item of items) {
-      const srcPath = path.join(src, item)
-      const destPath = path.join(dest, item)
-      const stats = await fs.stat(srcPath)
+    // Use Promise.all with pLimit for concurrent file copying
+    await Promise.all(
+      items.map((item) =>
+        this.limit(async () => {
+          const srcPath = path.join(src, item)
+          const destPath = path.join(dest, item)
+          const stats = await fs.stat(srcPath)
 
-      if (stats.isDirectory()) {
-        await this.copyDirectory(srcPath, destPath)
-      } else {
-        await fs.copyFile(srcPath, destPath)
-      }
-    }
+          if (stats.isDirectory()) {
+            await this.copyDirectory(srcPath, destPath)
+          } else {
+            await fs.copyFile(srcPath, destPath)
+          }
+        }),
+      ),
+    )
   }
 
   private async createZipArchive(sourceDir: string, outputPath: string): Promise<void> {
@@ -444,9 +565,9 @@ class ExtensionExporter {
 
         await fs.rm(tempDir, { recursive: true, force: true })
 
-        console.log(`✅ Successfully converted '${extension.name}' to Firefox format.`)
-        console.log(`📦 XPI file: ${xpiPath}`)
-        console.log(`📁 Unpacked: ${unpackedDir}`)
+        note(chalk.green(`✅ Successfully converted '${extension.name}' to Firefox format.`))
+        note(chalk.blue(`📦 XPI file: ${xpiPath}`))
+        note(chalk.blue(`📁 Unpacked: ${unpackedDir}`))
       } else {
         const outputDir = path.join(browserOutputDir, safeName)
         await fs.mkdir(outputDir, { recursive: true })
@@ -459,20 +580,24 @@ class ExtensionExporter {
           "utf-8",
         )
 
-        console.log(`✅ Successfully converted '${extension.name}' to ${targetConfig.name} format.`)
-        console.log(`📁 Output: ${outputDir}`)
+        note(
+          chalk.green(
+            `✅ Successfully converted '${extension.name}' to ${targetConfig.name} format.`,
+          ),
+        )
+        note(chalk.blue(`📁 Output: ${outputDir}`))
       }
     } catch (error) {
-      console.error(`❌ Error converting '${extension.name}':`, error)
+      console.error(chalk.red(`❌ Error converting '${extension.name}':`, error))
       throw error
     }
   }
 
   async run(): Promise<void> {
     try {
-      console.log("=====================================")
-      console.log("📦 Browser Extension Export Tool")
-      console.log("=====================================")
+      note(chalk.bold("====================================="))
+      note(chalk.bold("📦 Browser Extension Export Tool"))
+      note(chalk.bold("====================================="))
 
       const supportedBrowsers = Object.keys(BROWSER_CONFIGS)
       const installedBrowsers = []
@@ -486,24 +611,29 @@ class ExtensionExporter {
       }
 
       if (installedBrowsers.length === 0) {
-        console.log("❌ No supported browsers found installed on your system.")
+        note(chalk.red("❌ No supported browsers found installed on your system."))
         return
       }
 
-      console.log("🌐 Installed browsers:", installedBrowsers.join(", "))
+      note(chalk.blue("🌐 Installed browsers:", installedBrowsers.join(", ")))
 
       // Select source browser
-      const sourceBrowser = await select({
+      const sourceBrowser = (await select({
         message: "Select browser to export extensions from",
-        choices: installedBrowsers.map((browser) => {
+        options: installedBrowsers.map((browser) => {
           const config = BROWSER_CONFIGS[browser]
           if (!config) throw new Error(`Unsupported browser: ${browser}`)
           return {
-            name: config.name,
+            label: config.name,
             value: browser,
           }
         }),
-      })
+      })) as string
+
+      if (!sourceBrowser) {
+        note(chalk.yellow("Operation cancelled by user"))
+        return
+      }
 
       // Get profiles for source browser
       const profiles = await this.getBrowserProfiles(sourceBrowser)
@@ -511,56 +641,71 @@ class ExtensionExporter {
       if (!sourceConfig) throw new Error(`Unsupported browser: ${sourceBrowser}`)
 
       if (profiles.length === 0) {
-        console.log(`❌ No ${sourceConfig.name} profiles found.`)
+        note(chalk.red(`❌ No ${sourceConfig.name} profiles found.`))
         return
       }
 
       // Select profile
-      const selectedProfile = await select({
+      const selectedProfile = (await select({
         message: "Select profile to export extensions from",
-        choices: profiles.map((profile) => {
+        options: profiles.map((profile) => {
           return {
-            name: path.basename(profile),
+            label: path.basename(profile),
             value: profile,
           }
         }),
-      })
+      })) as string
+
+      if (!selectedProfile) {
+        note(chalk.yellow("Operation cancelled by user"))
+        return
+      }
 
       // Get extensions from profile
-      console.log("🔍 Scanning for installed extensions...")
+      note(chalk.blue("🔍 Scanning for installed extensions..."))
       const extensions = await this.getExtensionsFromProfile(selectedProfile, sourceBrowser)
 
       if (extensions.length === 0) {
-        console.log(`❌ No extensions found in the selected ${sourceConfig.name} profile.`)
+        note(chalk.red(`❌ No extensions found in the selected ${sourceConfig.name} profile.`))
         return
       }
 
       // Select extensions to export
       const selectedExtensions = await select({
         message: "Select extensions to export",
-        choices: extensions.map((ext) => {
+        options: extensions.map((ext) => {
           return {
-            name: `${ext.name} (v${ext.version})`,
+            label: `${ext.name} (v${ext.version})`,
             value: ext,
           }
         }),
       })
 
+      if (!selectedExtensions) {
+        note(chalk.yellow("Operation cancelled by user"))
+        return
+      }
+
       const extensionsArray = Array.isArray(selectedExtensions)
         ? selectedExtensions
         : [selectedExtensions]
 
-      for (const extension of extensionsArray) {
-        try {
-          await this.exportExtension(extension, sourceBrowser)
-        } catch (error) {
-          console.error(`❌ Failed to convert ${extension.name}:`, error)
-        }
-      }
+      // Use Promise.all with pLimit for concurrent extension export
+      await Promise.all(
+        extensionsArray.map((extension) =>
+          this.limit(async () => {
+            try {
+              await this.exportExtension(extension, sourceBrowser)
+            } catch (error) {
+              console.error(chalk.red(`❌ Failed to convert ${extension.name}:`, error))
+            }
+          }),
+        ),
+      )
 
-      console.log("✅ Extensions exported successfully!")
+      note(chalk.green("✅ Extensions exported successfully!"))
     } catch (error) {
-      console.error("❌ An error occurred:", error)
+      console.error(chalk.red("❌ An error occurred:", error))
     }
   }
 }
