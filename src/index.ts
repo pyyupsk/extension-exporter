@@ -1,9 +1,9 @@
+import { select } from "@inquirer/prompts"
 import archiver from "archiver"
 import { createWriteStream } from "fs"
-import * as fs from "fs/promises"
-import * as os from "os"
-import * as path from "path"
-import * as readline from "readline/promises"
+import fs from "fs/promises"
+import os from "os"
+import path from "path"
 
 // Types
 type BrowserConfig = {
@@ -170,19 +170,6 @@ const BROWSER_CONFIGS: Record<string, BrowserConfig> = {
 }
 
 class ExtensionExporter {
-  private rl: readline.Interface
-
-  constructor() {
-    this.rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout,
-    })
-  }
-
-  async cleanup(): Promise<void> {
-    this.rl.close()
-  }
-
   private getCurrentPlatform(): "windows" | "mac" | "linux" {
     const platform = os.platform()
     switch (platform) {
@@ -481,58 +468,6 @@ class ExtensionExporter {
     }
   }
 
-  private async promptUser(question: string): Promise<string> {
-    return await this.rl.question(question)
-  }
-
-  private async selectFromList<T>(
-    items: T[],
-    displayFn: (_item: T, _index: number) => string,
-    prompt: string,
-  ): Promise<T | T[]> {
-    if (items.length === 0) {
-      throw new Error("No items to select from")
-    }
-
-    console.log("=".repeat(50))
-    items.forEach((item, index) => {
-      console.log(`${index + 1}. ${displayFn(item, index)}`)
-    })
-    console.log("=".repeat(50))
-
-    const response = await this.promptUser(
-      `${prompt} (number, comma-separated numbers, or 'all'): `,
-    )
-
-    if (response.toLowerCase().trim() === "all") {
-      return items
-    }
-
-    const selections = response
-      .split(",")
-      .map((s) => s.trim())
-      .filter((s) => s)
-    const selectedItems: T[] = []
-
-    for (const selection of selections) {
-      const index = parseInt(selection) - 1
-      if (index >= 0 && index < items.length) {
-        const item = items[index]
-        if (item !== undefined) {
-          selectedItems.push(item)
-        }
-      } else {
-        console.warn(`⚠️  Invalid selection: ${selection}`)
-      }
-    }
-
-    if (selectedItems.length === 0) {
-      throw new Error("No valid selections made")
-    }
-
-    return selectedItems.length === 1 ? (selectedItems[0] as T) : selectedItems
-  }
-
   async run(): Promise<void> {
     try {
       console.log("=====================================")
@@ -558,15 +493,17 @@ class ExtensionExporter {
       console.log("🌐 Installed browsers:", installedBrowsers.join(", "))
 
       // Select source browser
-      const sourceBrowser = (await this.selectFromList(
-        installedBrowsers,
-        (browser) => {
+      const sourceBrowser = await select({
+        message: "Select browser to export extensions from",
+        choices: installedBrowsers.map((browser) => {
           const config = BROWSER_CONFIGS[browser]
           if (!config) throw new Error(`Unsupported browser: ${browser}`)
-          return config.name
-        },
-        "Select browser to export extensions from",
-      )) as string
+          return {
+            name: config.name,
+            value: browser,
+          }
+        }),
+      })
 
       // Get profiles for source browser
       const profiles = await this.getBrowserProfiles(sourceBrowser)
@@ -579,11 +516,15 @@ class ExtensionExporter {
       }
 
       // Select profile
-      const selectedProfile = (await this.selectFromList(
-        profiles,
-        (profile) => path.basename(profile),
-        "Select profile to export extensions from",
-      )) as string
+      const selectedProfile = await select({
+        message: "Select profile to export extensions from",
+        choices: profiles.map((profile) => {
+          return {
+            name: path.basename(profile),
+            value: profile,
+          }
+        }),
+      })
 
       // Get extensions from profile
       console.log("🔍 Scanning for installed extensions...")
@@ -595,11 +536,15 @@ class ExtensionExporter {
       }
 
       // Select extensions to export
-      const selectedExtensions = (await this.selectFromList(
-        extensions,
-        (ext) => `${ext.name} (v${ext.version})`,
-        "Select extensions to export",
-      )) as ExtensionInfo[]
+      const selectedExtensions = await select({
+        message: "Select extensions to export",
+        choices: extensions.map((ext) => {
+          return {
+            name: `${ext.name} (v${ext.version})`,
+            value: ext,
+          }
+        }),
+      })
 
       const extensionsArray = Array.isArray(selectedExtensions)
         ? selectedExtensions
@@ -629,8 +574,6 @@ async function main() {
   } catch (error) {
     console.error("Fatal error:", error)
     process.exit(1)
-  } finally {
-    await exporter.cleanup()
   }
 }
 
