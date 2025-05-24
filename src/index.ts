@@ -1,3 +1,5 @@
+#!/usr/bin/env node
+
 import { ExtensionExporter } from "./services/extension-exporter"
 import { handleError } from "./utils/error-handler"
 

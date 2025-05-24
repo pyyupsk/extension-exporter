@@ -1,9 +1,10 @@
 {
   "name": "extension-exporter",
   "version": "0.0.1",
+  "type": "module",
   "description": "A CLI tool for exporting browser extensions",
   "bin": {
-    "extension-exporter": "dist/index.js"
+    "extension-exporter": "dist/index.mjs"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

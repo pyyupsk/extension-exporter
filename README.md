@@ -12,9 +12,6 @@ npx extension-exporter
 
 # ⚡ Using PNPM
 pnpm dlx extension-exporter
-
-# 🐇 Using Bun
-bunx --bun extension-exporter
 ```
 
 The CLI will launch an interactive prompt ✨ to guide you through selecting, packaging, and exporting your browser extension.
