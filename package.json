@@ -1,17 +1,26 @@
 {
-  "name": "extension-export",
-  "version": "1.0.0",
-  "description": "Export browser extensions from various browsers",
+  "name": "extension-exporter",
+  "version": "0.0.1",
+  "description": "A CLI tool for exporting browser extensions",
+  "bin": {
+    "extension-exporter": "dist/index.js"
+  },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "module": "dist/index.mjs",
+  "files": [
+    "CHANGELOG.md",
+    "SECURITY.md",
+    "dist",
+    "package.json",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsup",
-    "dev": "bun src/index.ts",
     "format": "prettier -w . --list-different --cache",
     "lint": "eslint src --cache",
     "lint:fix": "eslint src --fix",
-    "start": "node dist/index.js",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
