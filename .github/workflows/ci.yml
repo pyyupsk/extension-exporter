@@ -1,0 +1,36 @@
+name: 🧪 CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        name: ⬇️ Checkout repository
+
+      - uses: oven-sh/setup-bun@v2
+        name: 📦 Setup bun.sh
+        with:
+          bun-version: latest
+
+      - name: 🔍 Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: 🧪 Linting and Type-Checking
+        run: |
+          bun run lint
+          bun run typecheck
