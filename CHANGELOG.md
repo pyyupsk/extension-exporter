@@ -1,5 +1,12 @@
 # Extension Exporter
 
+## 0.0.2
+
+### Patch Changes
+
+- Migrated to ESM modules with proper CLI setup
+- Removed Bun-specific usage instructions
+
 ## 0.0.1
 
 ### Initial Release
