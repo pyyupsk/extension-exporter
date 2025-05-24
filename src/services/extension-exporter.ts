@@ -1,4 +1,4 @@
-import { intro, select, spinner, isCancel, cancel, log } from "@clack/prompts"
+import { intro, select, spinner, isCancel, cancel, log, multiselect } from "@clack/prompts"
 import archiver from "archiver"
 import chalk from "chalk"
 import { glob } from "glob"
@@ -265,7 +265,7 @@ export class ExtensionExporter {
       return
     }
 
-    const selectedExtensions = await select({
+    const selectedExtensions = await multiselect({
       message: "Select extensions to export:",
       options: extensions.map((ext) => ({
         value: ext,
