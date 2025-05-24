@@ -5,6 +5,7 @@ import { glob } from "glob"
 import { createWriteStream } from "node:fs"
 import fs from "node:fs/promises"
 import path from "node:path"
+import pLimit from "p-limit"
 
 import type { BrowserConfig, ExtensionInfo, ManifestV2, ManifestV3 } from "../types"
 
@@ -14,6 +15,8 @@ import { handleErrorOrCancel } from "../utils/error-handler"
 import { pathExists, isDirectory, copyDirectory } from "../utils/fs"
 
 export class ExtensionExporter {
+  private limit = pLimit(3)
+
   private getCurrentPlatform(): "windows" | "mac" | "linux" {
     const platform = process.platform
     if (platform === "win32") return "windows"
@@ -99,78 +102,79 @@ export class ExtensionExporter {
 
     const items = await fs.readdir(extPath)
 
-    // Use Promise.all with pLimit for concurrent extension processing
     const results = await Promise.all(
-      items.map(async (item) => {
-        const itemPath = path.join(extPath, item)
+      items.map((item) =>
+        this.limit(async () => {
+          const itemPath = path.join(extPath, item)
 
-        if (!(await isDirectory(itemPath))) return null
+          if (!(await isDirectory(itemPath))) return null
 
-        try {
-          let manifestPath: string
-          let extensionDir: string
+          try {
+            let manifestPath: string
+            let extensionDir: string
 
-          if (["chrome", "edge", "brave", "opera", "vivaldi"].includes(browser)) {
-            const versions = await fs.readdir(itemPath)
-            const versionDirs = []
+            if (["chrome", "edge", "brave", "opera", "vivaldi"].includes(browser)) {
+              const versions = await fs.readdir(itemPath)
+              const versionDirs = []
 
-            for (const version of versions) {
-              const versionPath = path.join(itemPath, version)
-              if (await isDirectory(versionPath)) {
-                versionDirs.push(version)
+              for (const version of versions) {
+                const versionPath = path.join(itemPath, version)
+                if (await isDirectory(versionPath)) {
+                  versionDirs.push(version)
+                }
               }
-            }
 
-            if (versionDirs.length === 0) return null
+              if (versionDirs.length === 0) return null
 
-            const latestVersion = versionDirs.sort((a, b) => {
-              const aNum = a.split(".").map((n) => parseInt(n) || 0)
-              const bNum = b.split(".").map((n) => parseInt(n) || 0)
-              for (let i = 0; i < Math.max(aNum.length, bNum.length); i++) {
-                const diff = (bNum[i] || 0) - (aNum[i] || 0)
-                if (diff !== 0) return diff
-              }
-              return 0
-            })[0]
+              const latestVersion = versionDirs.sort((a, b) => {
+                const aNum = a.split(".").map((n) => parseInt(n) || 0)
+                const bNum = b.split(".").map((n) => parseInt(n) || 0)
+                for (let i = 0; i < Math.max(aNum.length, bNum.length); i++) {
+                  const diff = (bNum[i] || 0) - (aNum[i] || 0)
+                  if (diff !== 0) return diff
+                }
+                return 0
+              })[0]
 
-            if (!latestVersion) return null
-            extensionDir = path.join(itemPath, latestVersion)
-            manifestPath = path.join(extensionDir, "manifest.json")
-          } else if (browser === "firefox") {
-            extensionDir = itemPath
-            manifestPath = path.join(itemPath, "manifest.json")
-          } else {
-            return null
-          }
-
-          if (await pathExists(manifestPath)) {
-            const manifestData = await fs.readFile(manifestPath, "utf-8")
-            const manifest = JSON.parse(manifestData)
-            const extName = await this.getExtensionName(manifest, item)
-
-            const extensionInfo: ExtensionInfo = {
-              id: item,
-              name: extName,
-              version: manifest.version || "1.0.0",
-              description: manifest.description,
-              manifest,
-              folderPath: extensionDir,
-            }
-
-            // Validate extension info
-            try {
-              ExtensionInfoSchema.parse(extensionInfo)
-              return extensionInfo
-            } catch (error) {
-              log.warn(`Invalid extension info for ${item}: ${error}`)
+              if (!latestVersion) return null
+              extensionDir = path.join(itemPath, latestVersion)
+              manifestPath = path.join(extensionDir, "manifest.json")
+            } else if (browser === "firefox") {
+              extensionDir = itemPath
+              manifestPath = path.join(itemPath, "manifest.json")
+            } else {
               return null
             }
+
+            if (await pathExists(manifestPath)) {
+              const manifestData = await fs.readFile(manifestPath, "utf-8")
+              const manifest = JSON.parse(manifestData)
+              const extName = await this.getExtensionName(manifest, item)
+
+              const extensionInfo: ExtensionInfo = {
+                id: item,
+                name: extName,
+                version: manifest.version || "1.0.0",
+                description: manifest.description,
+                manifest,
+                folderPath: extensionDir,
+              }
+
+              // Validate extension info
+              try {
+                ExtensionInfoSchema.parse(extensionInfo)
+                return extensionInfo
+              } catch (error) {
+                log.warn(`Invalid extension info for ${item}: ${error}`)
+                return null
+              }
+            }
+          } catch (error) {
+            log.warn(`Error processing extension ${item}: ${error}`)
           }
-        } catch (error) {
-          log.warn(`Error processing extension ${item}: ${error}`)
-        }
-        return null
-      }),
+          return null
+        }),
+      ),
     )
 
     return results.filter((result) => result !== null)
@@ -274,9 +278,11 @@ export class ExtensionExporter {
       ? selectedExtensions
       : [selectedExtensions]
 
-    for (const extension of extensionsToExport) {
-      await this.exportExtension(extension, browser)
-    }
+    await Promise.all(
+      extensionsToExport.map((extension) =>
+        this.limit(() => this.exportExtension(extension, browser)),
+      ),
+    )
 
     log.success("Export completed successfully!")
   }
