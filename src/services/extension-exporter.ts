@@ -1,4 +1,4 @@
-import { intro, select, spinner, isCancel, cancel, log, multiselect } from "@clack/prompts"
+import { intro, select, spinner, log, multiselect } from "@clack/prompts"
 import archiver from "archiver"
 import chalk from "chalk"
 import { glob } from "glob"
@@ -10,6 +10,7 @@ import type { BrowserConfig, ExtensionInfo, ManifestV2, ManifestV3 } from "../ty
 
 import { BROWSER_CONFIGS } from "../config/browsers"
 import { ExtensionInfoSchema } from "../schemas"
+import { handleErrorOrCancel } from "../utils/error-handler"
 import { pathExists, isDirectory, copyDirectory } from "../utils/fs"
 
 export class ExtensionExporter {
@@ -219,18 +220,15 @@ export class ExtensionExporter {
 
     const browsers = await this.getSupportedBrowsers()
 
-    const browser = await select({
-      message: "Select a browser:",
-      options: browsers.map(([id, config]) => ({
-        value: id,
-        label: config.name,
-      })),
-    })
-
-    if (isCancel(browser)) {
-      cancel("Operation cancelled")
-      return
-    }
+    const browser = handleErrorOrCancel(
+      await select({
+        message: "Select a browser:",
+        options: browsers.map(([id, config]) => ({
+          value: id,
+          label: config.name,
+        })),
+      }),
+    )
 
     const s = spinner()
     s.start("Scanning for browser profiles...")
@@ -243,18 +241,15 @@ export class ExtensionExporter {
       return
     }
 
-    const profile = await select({
-      message: "Select a profile:",
-      options: profiles.map((p) => ({
-        value: p,
-        label: path.basename(p),
-      })),
-    })
-
-    if (isCancel(profile)) {
-      cancel("Operation cancelled")
-      return
-    }
+    const profile = handleErrorOrCancel(
+      await select({
+        message: "Select a profile:",
+        options: profiles.map((p) => ({
+          value: p,
+          label: path.basename(p),
+        })),
+      }),
+    )
 
     s.start("Scanning for extensions...")
     const extensions = await this.getExtensionsFromProfile(profile, browser)
@@ -265,18 +260,15 @@ export class ExtensionExporter {
       return
     }
 
-    const selectedExtensions = await multiselect({
-      message: "Select extensions to export:",
-      options: extensions.map((ext) => ({
-        value: ext,
-        label: `${ext.name} (${ext.version})`,
-      })),
-    })
-
-    if (isCancel(selectedExtensions)) {
-      cancel("Operation cancelled")
-      return
-    }
+    const selectedExtensions = handleErrorOrCancel(
+      await multiselect({
+        message: "Select extensions to export:",
+        options: extensions.map((ext) => ({
+          value: ext,
+          label: `${ext.name} (${ext.version})`,
+        })),
+      }),
+    )
 
     const extensionsToExport = Array.isArray(selectedExtensions)
       ? selectedExtensions
