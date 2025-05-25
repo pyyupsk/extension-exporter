@@ -1,5 +1,7 @@
 # 🚀 Extension Exporter
 
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=pyyupsk_extension-exporter&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=pyyupsk_extension-exporter)
+
 **Extension Exporter** is a powerful ⚙️ CLI tool that helps developers package and export browser extensions 🌐 in a standardized and efficient way.
 
 ## 📦 Usage
