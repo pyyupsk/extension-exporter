@@ -15,7 +15,7 @@ import { handleErrorOrCancel } from "../utils/error-handler"
 import { pathExists, isDirectory, copyDirectory } from "../utils/fs"
 
 export class ExtensionExporter {
-  private limit = pLimit(3)
+  private readonly limit = pLimit(3)
 
   private getCurrentPlatform(): "windows" | "mac" | "linux" {
     const platform = process.platform
@@ -87,6 +87,32 @@ export class ExtensionExporter {
     return name
   }
 
+  private async getLatestVersionDir(itemPath: string): Promise<string | null> {
+    const versions = await fs.readdir(itemPath)
+    const versionDirs = []
+
+    for (const version of versions) {
+      const versionPath = path.join(itemPath, version)
+      if (await isDirectory(versionPath)) {
+        versionDirs.push(version)
+      }
+    }
+
+    if (versionDirs.length === 0) return null
+
+    return (
+      versionDirs.toSorted((a, b) => {
+        const aNum = a.split(".").map((n) => parseInt(n) || 0)
+        const bNum = b.split(".").map((n) => parseInt(n) || 0)
+        for (let i = 0; i < Math.max(aNum.length, bNum.length); i++) {
+          const diff = (bNum[i] ?? 0) - (aNum[i] ?? 0)
+          if (diff !== 0) return diff
+        }
+        return 0
+      })[0] ?? null
+    )
+  }
+
   async getExtensionsFromProfile(profilePath: string, browser: string): Promise<ExtensionInfo[]> {
     const config = BROWSER_CONFIGS[browser]
     if (!config) {
@@ -114,28 +140,7 @@ export class ExtensionExporter {
             let extensionDir: string
 
             if (["chrome", "edge", "brave", "opera", "vivaldi"].includes(browser)) {
-              const versions = await fs.readdir(itemPath)
-              const versionDirs = []
-
-              for (const version of versions) {
-                const versionPath = path.join(itemPath, version)
-                if (await isDirectory(versionPath)) {
-                  versionDirs.push(version)
-                }
-              }
-
-              if (versionDirs.length === 0) return null
-
-              const latestVersion = versionDirs.sort((a, b) => {
-                const aNum = a.split(".").map((n) => parseInt(n) || 0)
-                const bNum = b.split(".").map((n) => parseInt(n) || 0)
-                for (let i = 0; i < Math.max(aNum.length, bNum.length); i++) {
-                  const diff = (bNum[i] || 0) - (aNum[i] || 0)
-                  if (diff !== 0) return diff
-                }
-                return 0
-              })[0]
-
+              const latestVersion = await this.getLatestVersionDir(itemPath)
               if (!latestVersion) return null
               extensionDir = path.join(itemPath, latestVersion)
               manifestPath = path.join(extensionDir, "manifest.json")
@@ -154,7 +159,7 @@ export class ExtensionExporter {
               const extensionInfo: ExtensionInfo = {
                 id: item,
                 name: extName,
-                version: manifest.version || "1.0.0",
+                version: manifest.version ?? "1.0.0",
                 description: manifest.description,
                 manifest,
                 folderPath: extensionDir,
