@@ -33,14 +33,14 @@ export const ExtensionInfoSchema = z.object({
       browser_action: z
         .object({
           default_title: z.string().optional(),
-          default_icon: z.union([z.string(), z.record(z.string())]).optional(),
+          default_icon: z.union([z.string(), z.record(z.string(), z.string())]).optional(),
           default_popup: z.string().optional(),
         })
         .optional(),
       page_action: z
         .object({
           default_title: z.string().optional(),
-          default_icon: z.union([z.string(), z.record(z.string())]).optional(),
+          default_icon: z.union([z.string(), z.record(z.string(), z.string())]).optional(),
           default_popup: z.string().optional(),
         })
         .optional(),
@@ -74,7 +74,7 @@ export const ExtensionInfoSchema = z.object({
       action: z
         .object({
           default_title: z.string().optional(),
-          default_icon: z.union([z.string(), z.record(z.string())]).optional(),
+          default_icon: z.union([z.string(), z.record(z.string(), z.string())]).optional(),
           default_popup: z.string().optional(),
         })
         .optional(),
